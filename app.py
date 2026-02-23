@@ -1,18 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import tempfile
 from typing import List
 
 import streamlit as st
 
-try:
-    from openai import OpenAI
-except ModuleNotFoundError:
-    OpenAI = None
-
 from rag_engine import PDFRAG, RetrievalResult
 
+
+OPENAI_AVAILABLE = importlib.util.find_spec("openai") is not None
 
 st.set_page_config(page_title="Vachanamrut RAG Assistant", page_icon="📖", layout="wide")
 
@@ -35,10 +33,7 @@ def _save_uploads_temp(uploaded_files) -> List[str]:
 
 
 def _generate_with_openai(question: str, retrieved: List[RetrievalResult]) -> str:
-    if OpenAI is None:
-        raise ModuleNotFoundError(
-            "The 'openai' package is not installed. Install it with `pip install openai` to enable LLM mode."
-        )
+    from openai import OpenAI
 
     context = "\n\n".join(f"[Score: {item.score:.3f}] {item.chunk}" for item in retrieved)
 
@@ -94,7 +89,7 @@ with st.sidebar:
     st.subheader("2) Optional LLM")
     st.write("Set `OPENAI_API_KEY` to generate fluent answers with an LLM.")
     st.write("Without API key, the app returns extractive answers from retrieved chunks.")
-    if OpenAI is None:
+    if not OPENAI_AVAILABLE:
         st.info("Install `openai` package to enable LLM mode: `pip install openai`.")
 
 question = st.text_input("Ask a question about Vachanamrut", placeholder="What does Vachanamrut say about true satsang?")
@@ -114,15 +109,15 @@ if st.button("Get Answer"):
         retrieved = st.session_state.rag.retrieve(question, top_k=top_k)
 
         st.subheader("Answer")
-        if use_llm and os.getenv("OPENAI_API_KEY") and OpenAI is not None:
+        if use_llm and not OPENAI_AVAILABLE:
+            st.warning("OpenAI mode requested, but `openai` package is not installed. Using extractive answer.")
+            answer = st.session_state.rag.answer_without_llm(question, retrieved)
+        elif use_llm and os.getenv("OPENAI_API_KEY"):
             try:
                 answer = _generate_with_openai(question, retrieved)
             except Exception as error:  # noqa: BLE001
                 st.warning(f"LLM call failed, using extractive answer instead: {error}")
                 answer = st.session_state.rag.answer_without_llm(question, retrieved)
-        elif use_llm and OpenAI is None:
-            st.warning("OpenAI mode requested, but `openai` package is not installed. Using extractive answer.")
-            answer = st.session_state.rag.answer_without_llm(question, retrieved)
         else:
             answer = st.session_state.rag.answer_without_llm(question, retrieved)
 

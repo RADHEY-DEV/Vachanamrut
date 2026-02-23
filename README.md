@@ -38,4 +38,5 @@ streamlit run app.py
   ```bash
   pip install openai
   ```
+- If traceback still points to `from openai import OpenAI` at top of `app.py`, you are likely running an older file. Pull latest changes and restart Streamlit.
 - The app works in extractive mode even without the OpenAI package/API key.
