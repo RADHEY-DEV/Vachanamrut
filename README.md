@@ -4,7 +4,7 @@ A simple Retrieval-Augmented Generation (RAG) web app that answers questions fro
 
 ## Features
 - Upload one or more PDF files.
-- Build a local TF-IDF index over text chunks.
+- Build a lightweight local TF-IDF-like index (pure Python) over text chunks.
 - Retrieve the most relevant chunks for each question.
 - Generate answers in two modes:
   - **LLM mode** (if `OPENAI_API_KEY` is set) using `gpt-4o-mini`.
@@ -30,7 +30,7 @@ streamlit run app.py
 
 
 ## Troubleshooting
-- If you get `ModuleNotFoundError: No module named 'pypdf'` (or `numpy` / `scikit-learn`), install dependencies in your active environment:
+- If you get `ModuleNotFoundError: No module named 'pypdf'`, install dependencies in your active environment:
   ```bash
   pip install -r requirements.txt
   ```
@@ -44,3 +44,5 @@ streamlit run app.py
   ```
 - If traceback still points to `from openai import OpenAI` at top of `app.py`, you are likely running an older file. Pull latest changes and restart Streamlit.
 - The app works in extractive mode even without the OpenAI package/API key.
+
+- If you get `ValueError: numpy.dtype size changed`, your environment has incompatible compiled wheels. This app no longer requires `numpy`/`scikit-learn`; recreate a clean venv and install only `requirements.txt`.

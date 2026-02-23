@@ -1,25 +1,15 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
+from math import log, sqrt
 from typing import List, Sequence
 import re
-
-try:
-    import numpy as np
-except ModuleNotFoundError:
-    np = None
 
 try:
     from pypdf import PdfReader
 except ModuleNotFoundError:
     PdfReader = None
-
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-except ModuleNotFoundError:
-    TfidfVectorizer = None
-    cosine_similarity = None
 
 
 @dataclass
@@ -32,12 +22,12 @@ class PDFRAG:
     def __init__(self, chunk_size: int = 900, overlap: int = 120) -> None:
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self.vectorizer: TfidfVectorizer | None = None
-        self.chunk_matrix = None
         self.chunks: list[str] = []
+        self.doc_vectors: list[dict[str, float]] = []
+        self.idf: dict[str, float] = {}
 
     def ingest_pdfs(self, pdf_paths: Sequence[str]) -> int:
-        self._ensure_dependencies(["pypdf", "scikit-learn"])
+        self._ensure_pdf_dependency()
 
         all_text: list[str] = []
         for path in pdf_paths:
@@ -53,27 +43,25 @@ class PDFRAG:
         if not self.chunks:
             raise ValueError("No readable text found in uploaded PDF(s).")
 
-        self.vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), max_features=25000)
-        self.chunk_matrix = self.vectorizer.fit_transform(self.chunks)
+        self._build_index()
         return len(self.chunks)
 
     def retrieve(self, question: str, top_k: int = 5) -> List[RetrievalResult]:
-        self._ensure_dependencies(["numpy", "scikit-learn"])
-
-        if self.vectorizer is None or self.chunk_matrix is None:
+        if not self.doc_vectors:
             raise ValueError("Knowledge base is empty. Please upload and process PDF files first.")
 
-        query_vec = self.vectorizer.transform([question])
-        scores = cosine_similarity(query_vec, self.chunk_matrix).flatten()
-        if len(scores) == 0:
+        query_vec = self._tfidf_vector(self._tokenize(question), self.idf)
+        if not query_vec:
             return []
 
-        top_indices = np.argsort(scores)[::-1][:top_k]
-        return [
-            RetrievalResult(chunk=self.chunks[i], score=float(scores[i]))
-            for i in top_indices
-            if float(scores[i]) > 0
-        ]
+        scored: list[RetrievalResult] = []
+        for idx, doc_vec in enumerate(self.doc_vectors):
+            score = self._cosine(query_vec, doc_vec)
+            if score > 0:
+                scored.append(RetrievalResult(chunk=self.chunks[idx], score=score))
+
+        scored.sort(key=lambda item: item.score, reverse=True)
+        return scored[:top_k]
 
     def answer_without_llm(self, question: str, retrieved: Sequence[RetrievalResult], max_sentences: int = 4) -> str:
         if not retrieved:
@@ -87,21 +75,65 @@ class PDFRAG:
         if not sentences:
             return "I found relevant chunks, but could not split them into readable sentences."
 
-        # If numerical/ML deps are not available, return a simple extractive fallback.
-        if np is None or TfidfVectorizer is None or cosine_similarity is None:
-            return " ".join(sentences[:max_sentences])
+        q_tokens = self._tokenize(question)
+        sentence_scores: list[tuple[int, float]] = []
+        for idx, sentence in enumerate(sentences):
+            s_tokens = self._tokenize(sentence)
+            overlap = len(set(q_tokens) & set(s_tokens))
+            norm = max(1, len(set(s_tokens)))
+            sentence_scores.append((idx, overlap / norm))
 
-        sent_vectorizer = TfidfVectorizer(stop_words="english")
-        sent_matrix = sent_vectorizer.fit_transform(sentences)
-        qv = sent_vectorizer.transform([question])
-        sent_scores = cosine_similarity(qv, sent_matrix).flatten()
+        sentence_scores.sort(key=lambda item: item[1], reverse=True)
+        chosen_indices = [idx for idx, score in sentence_scores[:max_sentences] if score > 0]
+        if not chosen_indices:
+            chosen_indices = list(range(min(max_sentences, len(sentences))))
 
-        ranked = np.argsort(sent_scores)[::-1][:max_sentences]
-        chosen = [sentences[idx] for idx in ranked if sent_scores[idx] > 0]
-        if not chosen:
-            chosen = sentences[:max_sentences]
+        return " ".join(sentences[idx] for idx in chosen_indices)
 
-        return " ".join(chosen)
+    def _build_index(self) -> None:
+        tokenized_docs = [self._tokenize(chunk) for chunk in self.chunks]
+        df: Counter[str] = Counter()
+        for tokens in tokenized_docs:
+            df.update(set(tokens))
+
+        n_docs = len(tokenized_docs)
+        self.idf = {
+            term: log((1 + n_docs) / (1 + freq)) + 1.0
+            for term, freq in df.items()
+        }
+
+        self.doc_vectors = [self._tfidf_vector(tokens, self.idf) for tokens in tokenized_docs]
+
+    def _tfidf_vector(self, tokens: Sequence[str], idf: dict[str, float]) -> dict[str, float]:
+        if not tokens:
+            return {}
+
+        tf = Counter(tokens)
+        total = len(tokens)
+        vector: dict[str, float] = {}
+        for term, freq in tf.items():
+            if term in idf:
+                vector[term] = (freq / total) * idf[term]
+        return vector
+
+    def _cosine(self, vec_a: dict[str, float], vec_b: dict[str, float]) -> float:
+        if not vec_a or not vec_b:
+            return 0.0
+
+        common_terms = set(vec_a).intersection(vec_b)
+        numerator = sum(vec_a[t] * vec_b[t] for t in common_terms)
+        norm_a = sqrt(sum(v * v for v in vec_a.values()))
+        norm_b = sqrt(sum(v * v for v in vec_b.values()))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return numerator / (norm_a * norm_b)
+
+    def _tokenize(self, text: str) -> list[str]:
+        return [
+            token
+            for token in re.findall(r"[A-Za-z]+", text.lower())
+            if len(token) > 2
+        ]
 
     def _chunk_text(self, text: str) -> list[str]:
         if not text:
@@ -119,18 +151,8 @@ class PDFRAG:
             start = max(0, end - self.overlap)
         return chunks
 
-    def _ensure_dependencies(self, required: Sequence[str]) -> None:
-        missing: list[str] = []
-        for dep in required:
-            if dep == "numpy" and np is None:
-                missing.append("numpy")
-            elif dep == "pypdf" and PdfReader is None:
-                missing.append("pypdf")
-            elif dep == "scikit-learn" and (TfidfVectorizer is None or cosine_similarity is None):
-                missing.append("scikit-learn")
-
-        if missing:
-            joined = ", ".join(sorted(set(missing)))
+    def _ensure_pdf_dependency(self) -> None:
+        if PdfReader is None:
             raise ModuleNotFoundError(
-                f"Missing required package(s): {joined}. Install dependencies with `pip install -r requirements.txt`."
+                "Missing required package: pypdf. Install dependencies with `pip install -r requirements.txt`."
             )
