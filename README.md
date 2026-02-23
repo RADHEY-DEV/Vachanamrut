@@ -1,16 +1,13 @@
 # Vachanamrut RAG Web App
 
-A simple Retrieval-Augmented Generation (RAG) web app that answers questions from uploaded **Vachanamrut PDF** files.
+A Retrieval-Augmented Generation (RAG) chat app that answers questions from Vachanamrut PDFs.
 
-## Features
-- Upload one or more PDF files.
-- Build a lightweight local TF-IDF-like index (pure Python) over text chunks.
-- Retrieve the most relevant chunks for each question.
-- Generate answers in two modes:
-  - **LLM mode** (if `OPENAI_API_KEY` is set) using `gpt-4o-mini`.
-  - **Extractive mode** (no API key needed), selecting the most relevant sentences from retrieved chunks.
+## What changed
+- PDFs are auto-read from a backend folder: `backend_pdfs/`
+- Chat-style interface with animated assistant response text
+- OpenAI key can be set directly in code (`OPENAI_API_KEY_IN_CODE`) or via environment variable
 
-## Run locally
+## Setup
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -18,31 +15,28 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Usage
-1. Upload Vachanamrut PDFs from the sidebar.
-2. Click **Process PDFs**.
-3. Ask a question and click **Get Answer**.
-4. Optionally enable OpenAI mode if `OPENAI_API_KEY` is configured.
+## How to use
+1. Put your PDF files into `backend_pdfs/`.
+2. Open the app and click **Refresh PDF Index** in sidebar.
+3. Ask questions in the chat box.
+4. To enable OpenAI answers, set either:
+   - `OPENAI_API_KEY_IN_CODE` in `app.py`, or
+   - `OPENAI_API_KEY` environment variable.
 
-## Notes
-- The quality depends on PDF text extraction quality.
-- For scanned PDFs, run OCR first for best results.
-
+## API key location in code
+Inside `app.py`:
+```python
+OPENAI_API_KEY_IN_CODE = ""
+```
+Paste your API key there if you explicitly want it in code.
 
 ## Troubleshooting
-- If you get `ModuleNotFoundError: No module named 'pypdf'`, install dependencies in your active environment:
+- `ModuleNotFoundError: No module named 'pypdf'`
   ```bash
   pip install -r requirements.txt
   ```
-- If you get `ModuleNotFoundError: No module named 'openai'`, install dependencies in your active environment:
-  ```bash
-  pip install -r requirements.txt
-  ```
-  Or install only OpenAI package:
+- `ModuleNotFoundError: No module named 'openai'`
   ```bash
   pip install openai
   ```
-- If traceback still points to `from openai import OpenAI` at top of `app.py`, you are likely running an older file. Pull latest changes and restart Streamlit.
-- The app works in extractive mode even without the OpenAI package/API key.
-
-- If you get `ValueError: numpy.dtype size changed`, your environment has incompatible compiled wheels. This app no longer requires `numpy`/`scikit-learn`; recreate a clean venv and install only `requirements.txt`.
+- If dependencies were mixed globally before, recreate clean venv and reinstall.

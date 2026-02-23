@@ -2,42 +2,68 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import tempfile
-from typing import List
+import time
+from pathlib import Path
 
 import streamlit as st
 
 from rag_engine import PDFRAG, RetrievalResult
 
 
+# --- Configure here ---
+PDF_FOLDER = Path("backend_pdfs")
+OPENAI_API_KEY_IN_CODE = ""  # Paste your OpenAI API key here if you want to keep it in code.
+OPENAI_MODEL = "gpt-4o-mini"
+# ----------------------
+
 OPENAI_AVAILABLE = importlib.util.find_spec("openai") is not None
 
 st.set_page_config(page_title="Vachanamrut RAG Assistant", page_icon="📖", layout="wide")
-
-st.title("📖 Vachanamrut RAG Web App")
-st.caption("Upload Vachanamrut PDF files and ask questions grounded in the uploaded text.")
+st.title("📖 Vachanamrut Chat Assistant")
+st.caption("Auto-loads PDFs from backend folder and answers in a chat-like flow.")
 
 if "rag" not in st.session_state:
     st.session_state.rag = PDFRAG()
 if "ready" not in st.session_state:
     st.session_state.ready = False
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "loaded_files" not in st.session_state:
+    st.session_state.loaded_files = []
 
 
-def _save_uploads_temp(uploaded_files) -> List[str]:
-    paths: list[str] = []
-    for file in uploaded_files:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(file.read())
-            paths.append(tmp.name)
-    return paths
+def _resolve_api_key() -> str | None:
+    if OPENAI_API_KEY_IN_CODE.strip():
+        return OPENAI_API_KEY_IN_CODE.strip()
+    env_key = os.getenv("OPENAI_API_KEY", "").strip()
+    return env_key if env_key else None
 
 
-def _generate_with_openai(question: str, retrieved: List[RetrievalResult]) -> str:
+def _scan_pdf_folder() -> list[str]:
+    if not PDF_FOLDER.exists():
+        return []
+    return sorted(str(path) for path in PDF_FOLDER.glob("*.pdf") if path.is_file())
+
+
+def _ingest_from_backend_folder() -> None:
+    pdf_paths = _scan_pdf_folder()
+    if not pdf_paths:
+        st.session_state.ready = False
+        st.session_state.loaded_files = []
+        return
+
+    chunk_count = st.session_state.rag.ingest_pdfs(pdf_paths)
+    st.session_state.ready = True
+    st.session_state.loaded_files = [Path(p).name for p in pdf_paths]
+    st.session_state.chunk_count = chunk_count
+
+
+def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_key: str) -> str:
     from openai import OpenAI
 
     context = "\n\n".join(f"[Score: {item.score:.3f}] {item.chunk}" for item in retrieved)
+    client = OpenAI(api_key=api_key)
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     prompt = (
         "You are a helpful assistant that answers questions only from provided Vachanamrut context. "
         "If the context does not contain the answer, clearly say you don't know.\n\n"
@@ -47,7 +73,7 @@ def _generate_with_openai(question: str, retrieved: List[RetrievalResult]) -> st
     )
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=OPENAI_MODEL,
         messages=[
             {"role": "system", "content": "Ground every answer in provided context."},
             {"role": "user", "content": prompt},
@@ -57,75 +83,104 @@ def _generate_with_openai(question: str, retrieved: List[RetrievalResult]) -> st
     return response.choices[0].message.content or "No response from model."
 
 
-with st.sidebar:
-    st.subheader("1) Upload PDFs")
-    uploads = st.file_uploader(
-        "Upload one or more Vachanamrut PDF files",
-        type=["pdf"],
-        accept_multiple_files=True,
-    )
+def _animated_assistant_text(text: str) -> None:
+    placeholder = st.empty()
+    words = text.split()
+    visible = []
+    for word in words:
+        visible.append(word)
+        placeholder.markdown(" ".join(visible))
+        time.sleep(0.015)
 
-    if st.button("Process PDFs", type="primary"):
-        if not uploads:
-            st.warning("Please upload at least one PDF first.")
-        else:
-            with st.spinner("Reading and indexing PDFs..."):
-                paths = _save_uploads_temp(uploads)
-                try:
-                    chunk_count = st.session_state.rag.ingest_pdfs(paths)
-                    st.session_state.ready = True
-                    st.success(f"Ready! Indexed {chunk_count} chunks.")
-                except Exception as error:  # noqa: BLE001
-                    st.session_state.ready = False
-                    st.error(f"Failed to process PDFs: {error}")
-                finally:
-                    for path in paths:
-                        try:
-                            os.unlink(path)
-                        except OSError:
-                            pass
+
+with st.sidebar:
+    st.subheader("Backend PDF Source")
+    st.write(f"Folder: `{PDF_FOLDER}`")
+    st.write("Put your Vachanamrut PDF files in this folder and click refresh.")
+
+    if st.button("Refresh PDF Index", type="primary"):
+        with st.spinner("Scanning and indexing backend PDFs..."):
+            try:
+                _ingest_from_backend_folder()
+                if st.session_state.ready:
+                    st.success(
+                        f"Indexed {st.session_state.chunk_count} chunks from {len(st.session_state.loaded_files)} file(s)."
+                    )
+                else:
+                    st.warning("No PDF files found in backend folder.")
+            except Exception as error:  # noqa: BLE001
+                st.session_state.ready = False
+                st.error(f"Failed to index PDFs: {error}")
 
     st.markdown("---")
-    st.subheader("2) Optional LLM")
-    st.write("Set `OPENAI_API_KEY` to generate fluent answers with an LLM.")
-    st.write("Without API key, the app returns extractive answers from retrieved chunks.")
+    st.subheader("LLM Setup")
+    st.write("OpenAI key is read from code constant first, then `OPENAI_API_KEY` env var.")
+
+    if OPENAI_API_KEY_IN_CODE.strip():
+        st.success("Using API key from code constant.")
+    elif _resolve_api_key():
+        st.info("Using API key from environment variable.")
+    else:
+        st.warning("No API key detected. Extractive mode will be used.")
+
     if not OPENAI_AVAILABLE:
         st.info("Install `openai` package to enable LLM mode: `pip install openai`.")
 
-question = st.text_input("Ask a question about Vachanamrut", placeholder="What does Vachanamrut say about true satsang?")
-
-col1, col2 = st.columns([1, 1])
-with col1:
-    top_k = st.slider("Retrieved chunks", min_value=2, max_value=10, value=5)
-with col2:
-    use_llm = st.checkbox("Use OpenAI (if API key set)", value=True)
-
-if st.button("Get Answer"):
-    if not st.session_state.ready:
-        st.error("Please upload and process PDFs first.")
-    elif not question.strip():
-        st.warning("Please enter a question.")
+    st.markdown("---")
+    st.subheader("Loaded PDFs")
+    if st.session_state.loaded_files:
+        for file_name in st.session_state.loaded_files:
+            st.write(f"• {file_name}")
     else:
-        retrieved = st.session_state.rag.retrieve(question, top_k=top_k)
+        st.write("No PDFs indexed yet.")
 
-        st.subheader("Answer")
-        if use_llm and not OPENAI_AVAILABLE:
-            st.warning("OpenAI mode requested, but `openai` package is not installed. Using extractive answer.")
-            answer = st.session_state.rag.answer_without_llm(question, retrieved)
-        elif use_llm and os.getenv("OPENAI_API_KEY"):
-            try:
-                answer = _generate_with_openai(question, retrieved)
-            except Exception as error:  # noqa: BLE001
-                st.warning(f"LLM call failed, using extractive answer instead: {error}")
-                answer = st.session_state.rag.answer_without_llm(question, retrieved)
+if not st.session_state.ready:
+    with st.spinner("Auto-indexing backend PDFs..."):
+        try:
+            _ingest_from_backend_folder()
+        except Exception as error:  # noqa: BLE001
+            st.session_state.ready = False
+            st.error(f"Auto-index failed: {error}")
+
+if not st.session_state.ready:
+    st.warning("No indexed PDFs available. Add PDF files to `backend_pdfs/` and click **Refresh PDF Index**.")
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+question = st.chat_input("Ask about Vachanamrut...")
+if question:
+    st.session_state.messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    with st.chat_message("assistant"):
+        if not st.session_state.ready:
+            reply = "I cannot answer yet because no backend PDFs are indexed. Add PDFs to backend_pdfs and refresh index."
+            _animated_assistant_text(reply)
         else:
-            answer = st.session_state.rag.answer_without_llm(question, retrieved)
+            retrieved = st.session_state.rag.retrieve(question, top_k=5)
+            api_key = _resolve_api_key()
+            if OPENAI_AVAILABLE and api_key:
+                try:
+                    answer = _generate_with_openai(question, retrieved, api_key)
+                except Exception as error:  # noqa: BLE001
+                    answer = (
+                        "OpenAI response failed, so I switched to extractive mode. "
+                        f"Details: {error}\n\n"
+                        + st.session_state.rag.answer_without_llm(question, retrieved)
+                    )
+            else:
+                answer = st.session_state.rag.answer_without_llm(question, retrieved)
 
-        st.write(answer)
+            _animated_assistant_text(answer)
 
-        st.subheader("Retrieved Context")
-        if not retrieved:
-            st.info("No relevant chunks found.")
-        for idx, item in enumerate(retrieved, start=1):
-            with st.expander(f"Chunk {idx} (score {item.score:.3f})"):
-                st.write(item.chunk)
+            with st.expander("Retrieved Context"):
+                if not retrieved:
+                    st.info("No relevant chunks found.")
+                for idx, item in enumerate(retrieved, start=1):
+                    st.markdown(f"**Chunk {idx} (score {item.score:.3f})**")
+                    st.write(item.chunk)
+
+        st.session_state.messages.append({"role": "assistant", "content": answer if st.session_state.ready else reply})
