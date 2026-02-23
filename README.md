@@ -30,6 +30,10 @@ streamlit run app.py
 
 
 ## Troubleshooting
+- If you get `ModuleNotFoundError: No module named 'pypdf'` (or `numpy` / `scikit-learn`), install dependencies in your active environment:
+  ```bash
+  pip install -r requirements.txt
+  ```
 - If you get `ModuleNotFoundError: No module named 'openai'`, install dependencies in your active environment:
   ```bash
   pip install -r requirements.txt

@@ -4,10 +4,22 @@ from dataclasses import dataclass
 from typing import List, Sequence
 import re
 
-import numpy as np
-from pypdf import PdfReader
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+try:
+    import numpy as np
+except ModuleNotFoundError:
+    np = None
+
+try:
+    from pypdf import PdfReader
+except ModuleNotFoundError:
+    PdfReader = None
+
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+except ModuleNotFoundError:
+    TfidfVectorizer = None
+    cosine_similarity = None
 
 
 @dataclass
@@ -25,6 +37,8 @@ class PDFRAG:
         self.chunks: list[str] = []
 
     def ingest_pdfs(self, pdf_paths: Sequence[str]) -> int:
+        self._ensure_dependencies(["pypdf", "scikit-learn"])
+
         all_text: list[str] = []
         for path in pdf_paths:
             reader = PdfReader(path)
@@ -44,6 +58,8 @@ class PDFRAG:
         return len(self.chunks)
 
     def retrieve(self, question: str, top_k: int = 5) -> List[RetrievalResult]:
+        self._ensure_dependencies(["numpy", "scikit-learn"])
+
         if self.vectorizer is None or self.chunk_matrix is None:
             raise ValueError("Knowledge base is empty. Please upload and process PDF files first.")
 
@@ -70,6 +86,10 @@ class PDFRAG:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", candidate_text) if s.strip()]
         if not sentences:
             return "I found relevant chunks, but could not split them into readable sentences."
+
+        # If numerical/ML deps are not available, return a simple extractive fallback.
+        if np is None or TfidfVectorizer is None or cosine_similarity is None:
+            return " ".join(sentences[:max_sentences])
 
         sent_vectorizer = TfidfVectorizer(stop_words="english")
         sent_matrix = sent_vectorizer.fit_transform(sentences)
@@ -98,3 +118,19 @@ class PDFRAG:
                 break
             start = max(0, end - self.overlap)
         return chunks
+
+    def _ensure_dependencies(self, required: Sequence[str]) -> None:
+        missing: list[str] = []
+        for dep in required:
+            if dep == "numpy" and np is None:
+                missing.append("numpy")
+            elif dep == "pypdf" and PdfReader is None:
+                missing.append("pypdf")
+            elif dep == "scikit-learn" and (TfidfVectorizer is None or cosine_similarity is None):
+                missing.append("scikit-learn")
+
+        if missing:
+            joined = ", ".join(sorted(set(missing)))
+            raise ModuleNotFoundError(
+                f"Missing required package(s): {joined}. Install dependencies with `pip install -r requirements.txt`."
+            )
