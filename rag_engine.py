@@ -28,17 +28,17 @@ class PDFRAG:
         self.idf: dict[str, float] = {}
 
     def ingest_sources(self, pdf_paths: Sequence[str], text_paths: Sequence[str]) -> int:
-        all_text: list[str] = []
+        docs: list[str] = []
 
         if pdf_paths:
             self._ensure_pdf_dependency()
-            all_text.extend(self._extract_pdf_texts(pdf_paths))
+            docs.extend(self._extract_pdf_documents(pdf_paths))
 
         if text_paths:
-            all_text.extend(self._extract_text_file_texts(text_paths))
+            docs.extend(self._extract_text_documents(text_paths))
 
-        corpus = "\n".join(all_text)
-        self.chunks = self._chunk_text(corpus)
+        # User preference: keep chunk boundaries aligned to each source file.
+        self.chunks = [doc for doc in docs if doc]
         if not self.chunks:
             raise ValueError("No readable text found in provided sources.")
 
@@ -92,18 +92,22 @@ class PDFRAG:
 
         return " ".join(sentences[idx] for idx in chosen_indices)
 
-    def _extract_pdf_texts(self, pdf_paths: Sequence[str]) -> list[str]:
+    def _extract_pdf_documents(self, pdf_paths: Sequence[str]) -> list[str]:
         extracted: list[str] = []
         for path in pdf_paths:
             reader = PdfReader(path)
+            pages: list[str] = []
             for page in reader.pages:
                 page_text = page.extract_text() or ""
                 cleaned = re.sub(r"\s+", " ", page_text).strip()
                 if cleaned:
-                    extracted.append(cleaned)
+                    pages.append(cleaned)
+            merged = " ".join(pages).strip()
+            if merged:
+                extracted.append(merged)
         return extracted
 
-    def _extract_text_file_texts(self, text_paths: Sequence[str]) -> list[str]:
+    def _extract_text_documents(self, text_paths: Sequence[str]) -> list[str]:
         extracted: list[str] = []
         for path in text_paths:
             content = Path(path).read_text(encoding="utf-8", errors="ignore")
@@ -148,22 +152,6 @@ class PDFRAG:
 
     def _tokenize(self, text: str) -> list[str]:
         return [token for token in re.findall(r"[A-Za-z]+", text.lower()) if len(token) > 2]
-
-    def _chunk_text(self, text: str) -> list[str]:
-        if not text:
-            return []
-
-        chunks: list[str] = []
-        start = 0
-        while start < len(text):
-            end = min(start + self.chunk_size, len(text))
-            snippet = text[start:end].strip()
-            if snippet:
-                chunks.append(snippet)
-            if end == len(text):
-                break
-            start = max(0, end - self.overlap)
-        return chunks
 
     def _ensure_pdf_dependency(self) -> None:
         if PdfReader is None:

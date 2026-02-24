@@ -5,6 +5,7 @@ A Retrieval-Augmented Generation (RAG) chat app that answers questions from Vach
 ## What changed
 - Sources are auto-read from a backend folder: `backend_docs/`
 - Supports `.txt`, `.md`, and `.pdf` sources (text files are recommended for best reliability)
+- Chunks are aligned per source file (one primary chunk per file) for chapter/discourse-level retrieval
 - Chat-style interface with animated assistant response text
 - OpenAI key can be set directly in code (`OPENAI_API_KEY_IN_CODE`) or via environment variable
 
