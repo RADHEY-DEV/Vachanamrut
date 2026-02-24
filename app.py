@@ -14,6 +14,8 @@ from rag_engine import PDFRAG, RetrievalResult
 PDF_FOLDER = Path("backend_pdfs")
 OPENAI_API_KEY_IN_CODE = ""  # Paste your OpenAI API key here if you want to keep it in code.
 OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]
+OPENAI_REQUEST_TIMEOUT_SECONDS = 45
 # ----------------------
 
 OPENAI_AVAILABLE = importlib.util.find_spec("openai") is not None
@@ -30,6 +32,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "loaded_files" not in st.session_state:
     st.session_state.loaded_files = []
+if "last_openai_error" not in st.session_state:
+    st.session_state.last_openai_error = ""
 
 
 def _resolve_api_key() -> str | None:
@@ -58,12 +62,8 @@ def _ingest_from_backend_folder() -> None:
     st.session_state.chunk_count = chunk_count
 
 
-def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_key: str) -> str:
-    from openai import OpenAI
-
+def _build_prompt(question: str, retrieved: list[RetrievalResult]) -> list[dict[str, str]]:
     context = "\n\n".join(f"[Score: {item.score:.3f}] {item.chunk}" for item in retrieved)
-    client = OpenAI(api_key=api_key)
-
     prompt = (
         "You are a helpful assistant that answers questions only from provided Vachanamrut context. "
         "If the context does not contain the answer, clearly say you don't know.\n\n"
@@ -71,16 +71,37 @@ def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_k
         f"Context:\n{context}\n\n"
         "Answer in concise, respectful language."
     )
+    return [
+        {"role": "system", "content": "Ground every answer in provided context."},
+        {"role": "user", "content": prompt},
+    ]
 
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": "Ground every answer in provided context."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
-    )
-    return response.choices[0].message.content or "No response from model."
+
+def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_key: str) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, timeout=OPENAI_REQUEST_TIMEOUT_SECONDS)
+    messages = _build_prompt(question, retrieved)
+
+    models_to_try: list[str] = [OPENAI_MODEL] + [m for m in OPENAI_FALLBACK_MODELS if m != OPENAI_MODEL]
+    errors: list[str] = []
+
+    for model_name in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=0.2,
+            )
+            st.session_state.last_openai_error = ""
+            content = response.choices[0].message.content or "No response from model."
+            return content
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"{model_name}: {error}")
+
+    full_error = " | ".join(errors)
+    st.session_state.last_openai_error = full_error
+    raise RuntimeError(full_error)
 
 
 def _animated_assistant_text(text: str) -> None:
@@ -91,6 +112,15 @@ def _animated_assistant_text(text: str) -> None:
         visible.append(word)
         placeholder.markdown(" ".join(visible))
         time.sleep(0.015)
+
+
+def _test_openai_connection(api_key: str) -> str:
+    try:
+        test_retrieved = [RetrievalResult(chunk="This is a small context test.", score=1.0)]
+        _ = _generate_with_openai("Reply with word: OK", test_retrieved, api_key)
+        return "OpenAI test passed. API key and model access look valid."
+    except Exception as error:  # noqa: BLE001
+        return f"OpenAI test failed: {error}"
 
 
 with st.sidebar:
@@ -116,15 +146,24 @@ with st.sidebar:
     st.subheader("LLM Setup")
     st.write("OpenAI key is read from code constant first, then `OPENAI_API_KEY` env var.")
 
+    resolved_key = _resolve_api_key()
     if OPENAI_API_KEY_IN_CODE.strip():
         st.success("Using API key from code constant.")
-    elif _resolve_api_key():
+    elif resolved_key:
         st.info("Using API key from environment variable.")
     else:
         st.warning("No API key detected. Extractive mode will be used.")
 
     if not OPENAI_AVAILABLE:
         st.info("Install `openai` package to enable LLM mode: `pip install openai`.")
+
+    if OPENAI_AVAILABLE and resolved_key:
+        if st.button("Test OpenAI Connection"):
+            with st.spinner("Testing OpenAI API call..."):
+                st.info(_test_openai_connection(resolved_key))
+
+    if st.session_state.last_openai_error:
+        st.error(f"Last OpenAI error: {st.session_state.last_openai_error}")
 
     st.markdown("---")
     st.subheader("Loaded PDFs")
@@ -159,16 +198,17 @@ if question:
         if not st.session_state.ready:
             reply = "I cannot answer yet because no backend PDFs are indexed. Add PDFs to backend_pdfs and refresh index."
             _animated_assistant_text(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
             retrieved = st.session_state.rag.retrieve(question, top_k=5)
             api_key = _resolve_api_key()
             if OPENAI_AVAILABLE and api_key:
                 try:
                     answer = _generate_with_openai(question, retrieved, api_key)
-                except Exception as error:  # noqa: BLE001
+                except Exception:
                     answer = (
                         "OpenAI response failed, so I switched to extractive mode. "
-                        f"Details: {error}\n\n"
+                        "Check sidebar for detailed OpenAI error.\n\n"
                         + st.session_state.rag.answer_without_llm(question, retrieved)
                     )
             else:
@@ -183,4 +223,4 @@ if question:
                     st.markdown(f"**Chunk {idx} (score {item.score:.3f})**")
                     st.write(item.chunk)
 
-        st.session_state.messages.append({"role": "assistant", "content": answer if st.session_state.ready else reply})
+            st.session_state.messages.append({"role": "assistant", "content": answer})

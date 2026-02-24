@@ -22,11 +22,14 @@ streamlit run app.py
 4. To enable OpenAI answers, set either:
    - `OPENAI_API_KEY_IN_CODE` in `app.py`, or
    - `OPENAI_API_KEY` environment variable.
+5. Use sidebar **Test OpenAI Connection** to verify key/model access.
 
 ## API key location in code
 Inside `app.py`:
 ```python
 OPENAI_API_KEY_IN_CODE = ""
+OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]
 ```
 Paste your API key there if you explicitly want it in code.
 
@@ -40,3 +43,5 @@ Paste your API key there if you explicitly want it in code.
   pip install openai
   ```
 - If dependencies were mixed globally before, recreate clean venv and reinstall.
+
+- If OpenAI fails, check sidebar for **Last OpenAI error** details and use **Test OpenAI Connection**.
