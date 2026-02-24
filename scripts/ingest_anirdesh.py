@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.anirdesh.com/vachanamrut/"
+SUPPORTED_FORMATS = ["gu", "en"]
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -64,7 +65,7 @@ def discover_entry_links(index_html: str, base_url: str) -> list[str]:
     return sorted(links)
 
 
-def _build_variant_urls(url: str) -> list[str]:
+def _build_variant_urls(url: str, preferred_formats: list[str] | None = None) -> list[str]:
     """Return URL variants to bypass format-specific 403 pages."""
     parsed = urlparse(url)
     query_items = dict(parse_qsl(parsed.query, keep_blank_values=True))
@@ -74,8 +75,9 @@ def _build_variant_urls(url: str) -> list[str]:
         return urlunparse(parsed._replace(query=urlencode(query_dict)))
 
     variants.append(url)
+    formats = preferred_formats or SUPPORTED_FORMATS
     if "format" in query_items:
-        for fmt in ("gu", "en", "eg", "hg"):
+        for fmt in formats + ["eg", "hg"]:
             q = dict(query_items)
             q["format"] = fmt
             variants.append(build(q))
@@ -92,9 +94,9 @@ def _build_variant_urls(url: str) -> list[str]:
     return deduped
 
 
-def _fetch_with_fallback(session: requests.Session, url: str, timeout: int, delay_s: float) -> tuple[str, str]:
+def _fetch_with_fallback(session: requests.Session, url: str, timeout: int, delay_s: float, preferred_formats: list[str] | None = None) -> tuple[str, str]:
     last_error: Exception | None = None
-    for candidate in _build_variant_urls(url):
+    for candidate in _build_variant_urls(url, preferred_formats=preferred_formats):
         try:
             resp = session.get(candidate, timeout=timeout)
             resp.raise_for_status()
@@ -107,6 +109,13 @@ def _fetch_with_fallback(session: requests.Session, url: str, timeout: int, dela
     assert last_error is not None
     raise last_error
 
+
+
+
+def _detect_language_from_url(url: str) -> str:
+    query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    fmt = query.get("format", "").strip().lower()
+    return fmt if fmt in SUPPORTED_FORMATS else "unknown"
 
 def _extract_vachno_id(url: str) -> str:
     query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
@@ -152,7 +161,7 @@ def _clean_body_text(text: str, title: str) -> str:
     return clean_text(cleaned)
 
 
-def extract_entry(url: str, html: str) -> tuple[str, str]:
+def extract_entry(url: str, html: str, language: str = "unknown") -> tuple[str, str]:
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "form"]):
@@ -181,12 +190,13 @@ def extract_entry(url: str, html: str) -> tuple[str, str]:
     if meta_id and meta_id not in title:
         title = f"{title} (Vachno {meta_id})"
 
-    content = f"Title: {title}\nVachnoID: {meta_id or 'N/A'}\nSourceURL: {url}\n\n{best_text}\n"
+    content = f"Title: {title}\nLanguage: {language}\nVachnoID: {meta_id or 'N/A'}\nSourceURL: {url}\n\n{best_text}\n"
 
+    lang_prefix = language if language in SUPPORTED_FORMATS else "xx"
     if meta_id:
-        filename = f"vachno-{meta_id}-{slugify(title)}.md"
+        filename = f"{lang_prefix}-vachno-{meta_id}-{slugify(title)}.md"
     else:
-        filename = slugify(title) + ".md"
+        filename = f"{lang_prefix}-{slugify(title)}.md"
     return filename, content
 
 
@@ -198,10 +208,17 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=30, help="HTTP timeout in seconds")
     parser.add_argument("--delay", type=float, default=0.15, help="Delay between page requests in seconds")
     parser.add_argument("--cookie", default="", help="Optional cookie header value copied from browser session")
+    parser.add_argument("--formats", default="gu,en", help="Comma-separated format priority, e.g. gu,en or en")
+    parser.add_argument("--by-language-folder", action="store_true", help="Store files under output_dir/<language>/")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    format_priority = [x.strip().lower() for x in args.formats.split(",") if x.strip()]
+    format_priority = [x for x in format_priority if x in SUPPORTED_FORMATS]
+    if not format_priority:
+        format_priority = SUPPORTED_FORMATS.copy()
 
     session = requests.Session()
     session.headers.update(DEFAULT_HEADERS)
@@ -220,9 +237,14 @@ def main() -> None:
     saved = 0
     for url in links:
         try:
-            final_url, html = _fetch_with_fallback(session, url, timeout=args.timeout, delay_s=args.delay)
-            filename, content = extract_entry(final_url, html)
-            (out_dir / filename).write_text(content, encoding="utf-8")
+            final_url, html = _fetch_with_fallback(
+                session, url, timeout=args.timeout, delay_s=args.delay, preferred_formats=format_priority
+            )
+            language = _detect_language_from_url(final_url)
+            filename, content = extract_entry(final_url, html, language=language)
+            target_dir = out_dir / language if args.by_language_folder else out_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / filename).write_text(content, encoding="utf-8")
             saved += 1
             print(f"Saved: {filename}")
         except Exception as exc:  # noqa: BLE001

@@ -72,9 +72,38 @@ If you still see many `format=gu` 403 skips, rerun with `--delay 0.5` and option
 
 The script now also:
 - writes one file per Vachanamrut link
-- prefixes filenames with `vachno-XXX-...` when `vachno` query id exists
+- prefixes filenames with `<lang>-vachno-XXX-...` when `vachno` query id exists
 - stores `VachnoID` and `SourceURL` in file metadata
 - removes common repeated site-menu boilerplate text during extraction
+
+
+## Best layout for Gujarati + English together
+Recommended structure:
+
+```text
+backend_docs/
+  anirdesh/
+    gu/
+      gu-vachno-001-....md
+      gu-vachno-002-....md
+    en/
+      en-vachno-001-....md
+      en-vachno-002-....md
+```
+
+Use this command to ingest both languages into separate folders:
+
+```bash
+python scripts/ingest_anirdesh.py --formats gu,en --by-language-folder --output-dir backend_docs/anirdesh
+```
+
+For English-first run:
+
+```bash
+python scripts/ingest_anirdesh.py --formats en --by-language-folder --output-dir backend_docs/anirdesh
+```
+
+The app now scans `backend_docs/` recursively, so subfolders like `gu/` and `en/` are indexed automatically.
 
 ## API key location in code
 Inside `app.py`:

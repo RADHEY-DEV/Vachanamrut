@@ -47,10 +47,10 @@ def _scan_source_folder() -> tuple[list[str], list[str]]:
     if not SOURCE_FOLDER.exists():
         return [], []
 
-    pdf_paths = sorted(str(path) for path in SOURCE_FOLDER.glob("*.pdf") if path.is_file())
+    pdf_paths = sorted(str(path) for path in SOURCE_FOLDER.rglob("*.pdf") if path.is_file())
     text_paths = []
     for pattern in ("*.txt", "*.md"):
-        text_paths.extend(str(path) for path in SOURCE_FOLDER.glob(pattern) if path.is_file())
+        text_paths.extend(str(path) for path in SOURCE_FOLDER.rglob(pattern) if path.is_file())
     return pdf_paths, sorted(text_paths)
 
 
