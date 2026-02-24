@@ -77,6 +77,17 @@ def _build_prompt(question: str, retrieved: list[RetrievalResult]) -> list[dict[
     ]
 
 
+def _format_openai_error(error: Exception) -> str:
+    message = str(error)
+    if "unexpected keyword argument 'proxies'" in message:
+        return (
+            message
+            + " | Dependency mismatch detected. Run: pip install 'httpx<0.28' --upgrade "
+            + "or reinstall from requirements.txt."
+        )
+    return message
+
+
 def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_key: str) -> str:
     from openai import OpenAI
 
@@ -97,7 +108,7 @@ def _generate_with_openai(question: str, retrieved: list[RetrievalResult], api_k
             content = response.choices[0].message.content or "No response from model."
             return content
         except Exception as error:  # noqa: BLE001
-            errors.append(f"{model_name}: {error}")
+            errors.append(f"{model_name}: {_format_openai_error(error)}")
 
     full_error = " | ".join(errors)
     st.session_state.last_openai_error = full_error

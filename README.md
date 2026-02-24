@@ -43,5 +43,13 @@ Paste your API key there if you explicitly want it in code.
   pip install openai
   ```
 - If dependencies were mixed globally before, recreate clean venv and reinstall.
+- If you get `Client.__init__() got an unexpected keyword argument 'proxies'`, fix HTTP client mismatch:
+  ```bash
+  pip install "httpx<0.28" --upgrade
+  ```
+  or reinstall all dependencies:
+  ```bash
+  pip install -r requirements.txt --upgrade
+  ```
 
 - If OpenAI fails, check sidebar for **Last OpenAI error** details and use **Test OpenAI Connection**.
