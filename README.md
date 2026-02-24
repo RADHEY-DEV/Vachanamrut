@@ -103,6 +103,12 @@ For English-first run:
 python scripts/ingest_anirdesh.py --formats en --by-language-folder --output-dir backend_docs/anirdesh
 ```
 
+For strict one-file-per-vachno English links (`index.php?format=en&vachno=1...`):
+
+```bash
+python scripts/ingest_anirdesh.py --formats en --by-language-folder --output-dir backend_docs/anirdesh --explicit-vachno-links --vachno-start 1 --vachno-end 273
+```
+
 The app now scans `backend_docs/` recursively, so subfolders like `gu/` and `en/` are indexed automatically.
 
 ## API key location in code

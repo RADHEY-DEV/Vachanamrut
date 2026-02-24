@@ -44,6 +44,22 @@ def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+
+
+def generate_vachno_links(base_url: str, format_priority: list[str], start: int, end: int) -> list[str]:
+    parsed = urlparse(base_url)
+    base_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    links: list[str] = []
+    primary_format = format_priority[0] if format_priority else "en"
+
+    for idx in range(start, end + 1):
+        q = dict(base_query)
+        q["format"] = primary_format
+        q["vachno"] = str(idx)
+        url = urlunparse(parsed._replace(query=urlencode(q)))
+        links.append(url)
+    return links
+
 def discover_entry_links(index_html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(index_html, "html.parser")
     links: set[str] = set()
@@ -210,6 +226,9 @@ def main() -> None:
     parser.add_argument("--cookie", default="", help="Optional cookie header value copied from browser session")
     parser.add_argument("--formats", default="gu,en", help="Comma-separated format priority, e.g. gu,en or en")
     parser.add_argument("--by-language-folder", action="store_true", help="Store files under output_dir/<language>/")
+    parser.add_argument("--vachno-start", type=int, default=1, help="Start vachno id for explicit link generation")
+    parser.add_argument("--vachno-end", type=int, default=273, help="End vachno id for explicit link generation")
+    parser.add_argument("--explicit-vachno-links", action="store_true", help="Generate explicit index.php?format=..&vachno=N links instead of discover-from-index")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -228,11 +247,19 @@ def main() -> None:
     index_resp = session.get(args.index_url, timeout=args.timeout)
     index_resp.raise_for_status()
 
-    links = discover_entry_links(index_resp.text, args.index_url)
-    if args.limit and args.limit > 0:
-        links = links[: args.limit]
-
-    print(f"Discovered {len(links)} candidate links")
+    if args.explicit_vachno_links:
+        links = generate_vachno_links(
+            base_url=args.index_url,
+            format_priority=format_priority,
+            start=args.vachno_start,
+            end=args.vachno_end,
+        )
+        print(f"Generated {len(links)} explicit vachno links")
+    else:
+        links = discover_entry_links(index_resp.text, args.index_url)
+        if args.limit and args.limit > 0:
+            links = links[: args.limit]
+        print(f"Discovered {len(links)} candidate links")
 
     saved = 0
     for url in links:
