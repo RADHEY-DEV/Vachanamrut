@@ -1,9 +1,10 @@
 # Vachanamrut RAG Web App
 
-A Retrieval-Augmented Generation (RAG) chat app that answers questions from Vachanamrut PDFs.
+A Retrieval-Augmented Generation (RAG) chat app that answers questions from Vachanamrut source files.
 
 ## What changed
-- PDFs are auto-read from a backend folder: `backend_pdfs/`
+- Sources are auto-read from a backend folder: `backend_docs/`
+- Supports `.txt`, `.md`, and `.pdf` sources (text files are recommended for best reliability)
 - Chat-style interface with animated assistant response text
 - OpenAI key can be set directly in code (`OPENAI_API_KEY_IN_CODE`) or via environment variable
 
@@ -16,13 +17,15 @@ streamlit run app.py
 ```
 
 ## How to use
-1. Put your PDF files into `backend_pdfs/`.
-2. Open the app and click **Refresh PDF Index** in sidebar.
-3. Ask questions in the chat box.
-4. To enable OpenAI answers, set either:
+1. Put your source files into `backend_docs/`.
+2. Preferred: add plain `.txt` or `.md` text files.
+3. PDF is also supported if `pypdf` is installed.
+4. Open the app and click **Refresh Source Index** in sidebar.
+5. Ask questions in the chat box.
+6. To enable OpenAI answers, set either:
    - `OPENAI_API_KEY_IN_CODE` in `app.py`, or
    - `OPENAI_API_KEY` environment variable.
-5. Use sidebar **Test OpenAI Connection** to verify key/model access.
+7. Use sidebar **Test OpenAI Connection** to verify key/model access.
 
 ## API key location in code
 Inside `app.py`:

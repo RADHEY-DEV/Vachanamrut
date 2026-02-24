@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from math import log, sqrt
+from pathlib import Path
 from typing import List, Sequence
 import re
 
@@ -26,29 +27,30 @@ class PDFRAG:
         self.doc_vectors: list[dict[str, float]] = []
         self.idf: dict[str, float] = {}
 
-    def ingest_pdfs(self, pdf_paths: Sequence[str]) -> int:
-        self._ensure_pdf_dependency()
-
+    def ingest_sources(self, pdf_paths: Sequence[str], text_paths: Sequence[str]) -> int:
         all_text: list[str] = []
-        for path in pdf_paths:
-            reader = PdfReader(path)
-            for page in reader.pages:
-                page_text = page.extract_text() or ""
-                cleaned = re.sub(r"\s+", " ", page_text).strip()
-                if cleaned:
-                    all_text.append(cleaned)
+
+        if pdf_paths:
+            self._ensure_pdf_dependency()
+            all_text.extend(self._extract_pdf_texts(pdf_paths))
+
+        if text_paths:
+            all_text.extend(self._extract_text_file_texts(text_paths))
 
         corpus = "\n".join(all_text)
         self.chunks = self._chunk_text(corpus)
         if not self.chunks:
-            raise ValueError("No readable text found in uploaded PDF(s).")
+            raise ValueError("No readable text found in provided sources.")
 
         self._build_index()
         return len(self.chunks)
 
+    def ingest_pdfs(self, pdf_paths: Sequence[str]) -> int:
+        return self.ingest_sources(pdf_paths=pdf_paths, text_paths=[])
+
     def retrieve(self, question: str, top_k: int = 5) -> List[RetrievalResult]:
         if not self.doc_vectors:
-            raise ValueError("Knowledge base is empty. Please upload and process PDF files first.")
+            raise ValueError("Knowledge base is empty. Please load source files first.")
 
         query_vec = self._tfidf_vector(self._tokenize(question), self.idf)
         if not query_vec:
@@ -66,8 +68,8 @@ class PDFRAG:
     def answer_without_llm(self, question: str, retrieved: Sequence[RetrievalResult], max_sentences: int = 4) -> str:
         if not retrieved:
             return (
-                "I could not find relevant passages in the uploaded Vachanamrut PDF. "
-                "Try rephrasing your question or upload clearer scans/text PDFs."
+                "I could not find relevant passages in loaded sources. "
+                "Try rephrasing your question or provide cleaner text/PDF files."
             )
 
         candidate_text = " ".join(item.chunk for item in retrieved)
@@ -90,6 +92,26 @@ class PDFRAG:
 
         return " ".join(sentences[idx] for idx in chosen_indices)
 
+    def _extract_pdf_texts(self, pdf_paths: Sequence[str]) -> list[str]:
+        extracted: list[str] = []
+        for path in pdf_paths:
+            reader = PdfReader(path)
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                cleaned = re.sub(r"\s+", " ", page_text).strip()
+                if cleaned:
+                    extracted.append(cleaned)
+        return extracted
+
+    def _extract_text_file_texts(self, text_paths: Sequence[str]) -> list[str]:
+        extracted: list[str] = []
+        for path in text_paths:
+            content = Path(path).read_text(encoding="utf-8", errors="ignore")
+            cleaned = re.sub(r"\s+", " ", content).strip()
+            if cleaned:
+                extracted.append(cleaned)
+        return extracted
+
     def _build_index(self) -> None:
         tokenized_docs = [self._tokenize(chunk) for chunk in self.chunks]
         df: Counter[str] = Counter()
@@ -97,11 +119,7 @@ class PDFRAG:
             df.update(set(tokens))
 
         n_docs = len(tokenized_docs)
-        self.idf = {
-            term: log((1 + n_docs) / (1 + freq)) + 1.0
-            for term, freq in df.items()
-        }
-
+        self.idf = {term: log((1 + n_docs) / (1 + freq)) + 1.0 for term, freq in df.items()}
         self.doc_vectors = [self._tfidf_vector(tokens, self.idf) for tokens in tokenized_docs]
 
     def _tfidf_vector(self, tokens: Sequence[str], idf: dict[str, float]) -> dict[str, float]:
@@ -129,11 +147,7 @@ class PDFRAG:
         return numerator / (norm_a * norm_b)
 
     def _tokenize(self, text: str) -> list[str]:
-        return [
-            token
-            for token in re.findall(r"[A-Za-z]+", text.lower())
-            if len(token) > 2
-        ]
+        return [token for token in re.findall(r"[A-Za-z]+", text.lower()) if len(token) > 2]
 
     def _chunk_text(self, text: str) -> list[str]:
         if not text:

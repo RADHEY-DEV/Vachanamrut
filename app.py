@@ -11,7 +11,7 @@ from rag_engine import PDFRAG, RetrievalResult
 
 
 # --- Configure here ---
-PDF_FOLDER = Path("backend_pdfs")
+SOURCE_FOLDER = Path("backend_docs")
 OPENAI_API_KEY_IN_CODE = ""  # Paste your OpenAI API key here if you want to keep it in code.
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_FALLBACK_MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]
@@ -22,7 +22,7 @@ OPENAI_AVAILABLE = importlib.util.find_spec("openai") is not None
 
 st.set_page_config(page_title="Vachanamrut RAG Assistant", page_icon="📖", layout="wide")
 st.title("📖 Vachanamrut Chat Assistant")
-st.caption("Auto-loads PDFs from backend folder and answers in a chat-like flow.")
+st.caption("Auto-loads text/PDF files from backend folder and answers in a chat-like flow.")
 
 if "rag" not in st.session_state:
     st.session_state.rag = PDFRAG()
@@ -43,22 +43,27 @@ def _resolve_api_key() -> str | None:
     return env_key if env_key else None
 
 
-def _scan_pdf_folder() -> list[str]:
-    if not PDF_FOLDER.exists():
-        return []
-    return sorted(str(path) for path in PDF_FOLDER.glob("*.pdf") if path.is_file())
+def _scan_source_folder() -> tuple[list[str], list[str]]:
+    if not SOURCE_FOLDER.exists():
+        return [], []
+
+    pdf_paths = sorted(str(path) for path in SOURCE_FOLDER.glob("*.pdf") if path.is_file())
+    text_paths = []
+    for pattern in ("*.txt", "*.md"):
+        text_paths.extend(str(path) for path in SOURCE_FOLDER.glob(pattern) if path.is_file())
+    return pdf_paths, sorted(text_paths)
 
 
 def _ingest_from_backend_folder() -> None:
-    pdf_paths = _scan_pdf_folder()
-    if not pdf_paths:
+    pdf_paths, text_paths = _scan_source_folder()
+    if not pdf_paths and not text_paths:
         st.session_state.ready = False
         st.session_state.loaded_files = []
         return
 
-    chunk_count = st.session_state.rag.ingest_pdfs(pdf_paths)
+    chunk_count = st.session_state.rag.ingest_sources(pdf_paths=pdf_paths, text_paths=text_paths)
     st.session_state.ready = True
-    st.session_state.loaded_files = [Path(p).name for p in pdf_paths]
+    st.session_state.loaded_files = [Path(p).name for p in [*pdf_paths, *text_paths]]
     st.session_state.chunk_count = chunk_count
 
 
@@ -135,12 +140,12 @@ def _test_openai_connection(api_key: str) -> str:
 
 
 with st.sidebar:
-    st.subheader("Backend PDF Source")
-    st.write(f"Folder: `{PDF_FOLDER}`")
-    st.write("Put your Vachanamrut PDF files in this folder and click refresh.")
+    st.subheader("Backend Source Files")
+    st.write(f"Folder: `{SOURCE_FOLDER}`")
+    st.write("Put your Vachanamrut `.txt`, `.md`, or `.pdf` files in this folder and click refresh.")
 
-    if st.button("Refresh PDF Index", type="primary"):
-        with st.spinner("Scanning and indexing backend PDFs..."):
+    if st.button("Refresh Source Index", type="primary"):
+        with st.spinner("Scanning and indexing backend source files..."):
             try:
                 _ingest_from_backend_folder()
                 if st.session_state.ready:
@@ -148,10 +153,10 @@ with st.sidebar:
                         f"Indexed {st.session_state.chunk_count} chunks from {len(st.session_state.loaded_files)} file(s)."
                     )
                 else:
-                    st.warning("No PDF files found in backend folder.")
+                    st.warning("No source files found in backend folder.")
             except Exception as error:  # noqa: BLE001
                 st.session_state.ready = False
-                st.error(f"Failed to index PDFs: {error}")
+                st.error(f"Failed to index source files: {error}")
 
     st.markdown("---")
     st.subheader("LLM Setup")
@@ -177,15 +182,15 @@ with st.sidebar:
         st.error(f"Last OpenAI error: {st.session_state.last_openai_error}")
 
     st.markdown("---")
-    st.subheader("Loaded PDFs")
+    st.subheader("Loaded Source Files")
     if st.session_state.loaded_files:
         for file_name in st.session_state.loaded_files:
             st.write(f"• {file_name}")
     else:
-        st.write("No PDFs indexed yet.")
+        st.write("No source files indexed yet.")
 
 if not st.session_state.ready:
-    with st.spinner("Auto-indexing backend PDFs..."):
+    with st.spinner("Auto-indexing backend source files..."):
         try:
             _ingest_from_backend_folder()
         except Exception as error:  # noqa: BLE001
@@ -193,7 +198,7 @@ if not st.session_state.ready:
             st.error(f"Auto-index failed: {error}")
 
 if not st.session_state.ready:
-    st.warning("No indexed PDFs available. Add PDF files to `backend_pdfs/` and click **Refresh PDF Index**.")
+    st.warning("No indexed files available. Add files to `backend_docs/` and click **Refresh Source Index**.")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -207,7 +212,7 @@ if question:
 
     with st.chat_message("assistant"):
         if not st.session_state.ready:
-            reply = "I cannot answer yet because no backend PDFs are indexed. Add PDFs to backend_pdfs and refresh index."
+            reply = "I cannot answer yet because no backend files are indexed. Add .txt/.md/.pdf files to backend_docs and refresh index."
             _animated_assistant_text(reply)
             st.session_state.messages.append({"role": "assistant", "content": reply})
         else:
