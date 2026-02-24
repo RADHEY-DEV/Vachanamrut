@@ -27,6 +27,42 @@ streamlit run app.py
    - `OPENAI_API_KEY` environment variable.
 7. Use sidebar **Test OpenAI Connection** to verify key/model access.
 
+## Best way to feed Vachanamrut (RAG-friendly)
+For better retrieval, store each discourse/chapter as one markdown file with metadata headers:
+
+```md
+Title: Gadhada I-01
+Section: Gadhada Pratham
+Number: 01
+Keywords: atma, bhakti, upasana
+SourceURL: https://www.anirdesh.com/vachanamrut/...
+
+<main discourse text>
+```
+
+Recommended file naming:
+- `backend_docs/gadhada-1-01.md`
+- `backend_docs/gadhada-1-02.md`
+- `backend_docs/loya-07.md`
+
+## Ingest from anirdesh.com automatically
+Use helper script to download and convert pages into markdown files under `backend_docs/anirdesh/`:
+
+```bash
+python scripts/ingest_anirdesh.py
+```
+
+Useful options:
+```bash
+# test with first 20 links
+python scripts/ingest_anirdesh.py --limit 20
+
+# custom output folder
+python scripts/ingest_anirdesh.py --output-dir backend_docs/vachanamrut_site
+```
+
+After running the script, open app and click **Refresh Source Index**.
+
 ## API key location in code
 Inside `app.py`:
 ```python
