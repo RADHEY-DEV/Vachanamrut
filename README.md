@@ -59,9 +59,16 @@ python scripts/ingest_anirdesh.py --limit 20
 
 # custom output folder
 python scripts/ingest_anirdesh.py --output-dir backend_docs/vachanamrut_site
+
+# if site blocks some links (403), try slower requests
+python scripts/ingest_anirdesh.py --delay 0.5
+
+# if needed, pass browser cookie header for authenticated/session access
+python scripts/ingest_anirdesh.py --cookie "your_cookie_string"
 ```
 
 After running the script, open app and click **Refresh Source Index**.
+If you still see many `format=gu` 403 skips, rerun with `--delay 0.5` and optionally `--cookie`.
 
 ## API key location in code
 Inside `app.py`:
