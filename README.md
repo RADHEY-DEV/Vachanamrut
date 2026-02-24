@@ -70,6 +70,12 @@ python scripts/ingest_anirdesh.py --cookie "your_cookie_string"
 After running the script, open app and click **Refresh Source Index**.
 If you still see many `format=gu` 403 skips, rerun with `--delay 0.5` and optionally `--cookie`.
 
+The script now also:
+- writes one file per Vachanamrut link
+- prefixes filenames with `vachno-XXX-...` when `vachno` query id exists
+- stores `VachnoID` and `SourceURL` in file metadata
+- removes common repeated site-menu boilerplate text during extraction
+
 ## API key location in code
 Inside `app.py`:
 ```python

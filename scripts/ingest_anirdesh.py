@@ -21,6 +21,18 @@ DEFAULT_HEADERS = {
     "Pragma": "no-cache",
 }
 
+BOILERPLATE_FRAGMENTS = [
+    "menu text_decrease text_increase",
+    "show side by side",
+    "show shravan audio",
+    "share ॥ શ્રી સ્વામિનારાયણો વિજયતે ॥",
+    "ગુ | en",
+    "en | tr",
+    "ગુ | tr",
+    "પ્રસંગ / prasangs",
+    "નિરૂપણ / nirupan",
+]
+
 
 def slugify(text: str) -> str:
     value = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
@@ -41,6 +53,11 @@ def discover_entry_links(index_html: str, base_url: str) -> list[str]:
         url = urljoin(base_url, href)
         if "vachanamrut" not in url.lower():
             continue
+        parsed = urlparse(url)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        # Prefer true entry links.
+        if "vachno" not in query and "vachanamrut/index.php" not in parsed.path:
+            continue
         if any(x in url.lower() for x in ("contact", "about", "search", "privacy", "login")):
             continue
         links.add(url)
@@ -58,7 +75,6 @@ def _build_variant_urls(url: str) -> list[str]:
 
     variants.append(url)
     if "format" in query_items:
-        # Try alternate formats and no format.
         for fmt in ("gu", "en", "eg", "hg"):
             q = dict(query_items)
             q["format"] = fmt
@@ -67,7 +83,6 @@ def _build_variant_urls(url: str) -> list[str]:
         q.pop("format", None)
         variants.append(build(q))
 
-    # Keep unique order.
     deduped: list[str] = []
     seen: set[str] = set()
     for item in variants:
@@ -93,36 +108,85 @@ def _fetch_with_fallback(session: requests.Session, url: str, timeout: int, dela
     raise last_error
 
 
+def _extract_vachno_id(url: str) -> str:
+    query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
+    raw = query.get("vachno", "").strip()
+    return raw if raw.isdigit() else ""
+
+
+def _extract_title(soup: BeautifulSoup, fallback_url: str) -> str:
+    selectors = [
+        "h1",
+        ".page-title",
+        ".entry-title",
+        "title",
+    ]
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if node:
+            title = clean_text(node.get_text(" ", strip=True))
+            if title:
+                return title
+
+    og = soup.find("meta", attrs={"property": "og:title"})
+    if og and og.get("content"):
+        return clean_text(str(og["content"]))
+
+    parsed = urlparse(fallback_url)
+    return parsed.path.strip("/").split("/")[-1] or "Vachanamrut"
+
+
+def _clean_body_text(text: str, title: str) -> str:
+    cleaned = clean_text(text)
+    lower = cleaned.lower()
+    for fragment in BOILERPLATE_FRAGMENTS:
+        pattern = re.compile(re.escape(fragment), re.IGNORECASE)
+        cleaned = pattern.sub(" ", cleaned)
+    cleaned = clean_text(cleaned)
+
+    if cleaned.lower().startswith(title.lower()):
+        cleaned = clean_text(cleaned[len(title) :])
+
+    # Remove excessive UI separator artifacts.
+    cleaned = re.sub(r"\b(ગુ|en|हिं|tr)\s*\|\s*(ગુ|en|हिं|tr)\b", " ", cleaned, flags=re.IGNORECASE)
+    return clean_text(cleaned)
+
+
 def extract_entry(url: str, html: str) -> tuple[str, str]:
     soup = BeautifulSoup(html, "html.parser")
 
-    for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
+    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "form"]):
         tag.decompose()
 
-    title = ""
-    h1 = soup.find("h1")
-    if h1:
-        title = clean_text(h1.get_text(" ", strip=True))
-    if not title and soup.title:
-        title = clean_text(soup.title.get_text(" ", strip=True))
-    if not title:
-        title = urlparse(url).path.strip("/").split("/")[-1] or "Vachanamrut"
+    title = _extract_title(soup, url)
 
-    candidates = soup.find_all(["article", "main", "section", "div"])
+    # Prefer known content containers first.
+    candidates = []
+    for selector in ("article", "main", "#content", ".content", ".post-content", ".entry-content"):
+        candidates.extend(soup.select(selector))
+    if not candidates:
+        candidates = soup.find_all(["article", "main", "section", "div"])
+
     best_text = ""
     for c in candidates:
-        text = clean_text(c.get_text(" ", strip=True))
+        text = _clean_body_text(c.get_text(" ", strip=True), title)
         if len(text) > len(best_text):
             best_text = text
 
     if not best_text:
-        best_text = clean_text(soup.get_text(" ", strip=True))
+        best_text = _clean_body_text(soup.get_text(" ", strip=True), title)
 
-    if best_text.lower().startswith(title.lower()):
-        best_text = clean_text(best_text[len(title) :])
+    vachno_id = _extract_vachno_id(url)
+    meta_id = f"{int(vachno_id):03d}" if vachno_id else ""
+    if meta_id and meta_id not in title:
+        title = f"{title} (Vachno {meta_id})"
 
-    content = f"Title: {title}\nSourceURL: {url}\n\n{best_text}\n"
-    filename = slugify(title) + ".md"
+    content = f"Title: {title}\nVachnoID: {meta_id or 'N/A'}\nSourceURL: {url}\n\n{best_text}\n"
+
+    if meta_id:
+        filename = f"vachno-{meta_id}-{slugify(title)}.md"
+    else:
+        filename = slugify(title) + ".md"
     return filename, content
 
 
